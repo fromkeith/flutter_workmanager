@@ -11,7 +11,8 @@ dependencies:
   permission_handler: 
   flutter:
     sdk: flutter
-  workmanager: 
+  workmanager:
+    path: ./../workmanager
 
 dev_dependencies:
   integration_test:

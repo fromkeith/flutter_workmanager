@@ -48,6 +48,9 @@ const val DEFAULT_PERIODIC_REFRESH_FREQUENCY_SECONDS =
 const val DEFAULT_FLEX_INTERVAL_SECONDS =
     PeriodicWorkRequest.MIN_PERIODIC_FLEX_MILLIS / 1000
 const val LOG_TAG = "Extractor"
+const val DART_PROGRESS = "progress"
+const val DART_WORK_KEY = "workId"
+const val DART_STATE = "state"
 
 data class BackoffPolicyTaskConfig(
     val backoffPolicy: BackoffPolicy,
@@ -131,6 +134,10 @@ sealed class WorkManagerCall {
         }
     }
 
+    sealed class ListenProgress: WorkManagerCall() {
+        object All: ListenProgress()
+    }
+
     sealed class IsScheduled : WorkManagerCall() {
         data class ByUniqueName(val uniqueName: String) : IsScheduled() {
             companion object KEYS {
@@ -168,6 +175,7 @@ private enum class TaskType(val minimumBackOffDelay: Long) {
 object Extractor {
     private enum class PossibleWorkManagerCall(val rawMethodName: String?) {
         INITIALIZE("initialize"),
+        LISTEN_PROGRESS("listenProgress"),
 
         REGISTER_ONE_OFF_TASK("registerOneOffTask"),
         REGISTER_PERIODIC_TASK("registerPeriodicTask"),
@@ -201,6 +209,9 @@ object Extractor {
                 } else {
                     WorkManagerCall.Initialize(handle, inDebugMode)
                 }
+            }
+            PossibleWorkManagerCall.LISTEN_PROGRESS -> {
+                WorkManagerCall.ListenProgress.All
             }
             PossibleWorkManagerCall.REGISTER_ONE_OFF_TASK -> {
                 WorkManagerCall.RegisterTask.OneOffTask(

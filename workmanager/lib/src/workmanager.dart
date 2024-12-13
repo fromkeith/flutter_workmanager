@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/services.dart';
@@ -131,6 +132,8 @@ class Workmanager {
   MethodChannel _foregroundChannel = const MethodChannel(
       "be.tramckrijte.workmanager/foreground_channel_work_manager");
 
+  late final Function(String taskId, String state, Map<String, dynamic> p) _onProgress;
+
   /// A helper function so you only need to implement a [BackgroundTaskHandler]
   void executeTask(final BackgroundTaskHandler backgroundTask) {
     WidgetsFlutterBinding.ensureInitialized();
@@ -146,6 +149,12 @@ class Workmanager {
     _backgroundChannel.invokeMethod("backgroundChannelInitialized");
   }
 
+  void setProgress(Map<String, dynamic> progress) {
+    _backgroundChannel.invokeMethod("backgroundChannelProgress", {
+      'be.tramckrijte.workmanager.PROGRESS': jsonEncode(progress),
+    });
+  }
+
   /// This call is required if you wish to use the [WorkManager] plugin.
   /// [callbackDispatcher] is a top level function which will be invoked by
   /// Android or iOS. See the discussion on [BackgroundTaskHandler] for details.
@@ -153,8 +162,10 @@ class Workmanager {
   Future<void> initialize(
     final Function callbackDispatcher, {
     final bool isInDebugMode = false,
+        final Function(String taskId, String state,Map<String, dynamic> p) ? onProgress,
   }) async {
     Workmanager._isInDebugMode = isInDebugMode;
+    this._onProgress = onProgress ?? (String t, String s, Map<String, dynamic> p) {};
     final callback = PluginUtilities.getCallbackHandle(callbackDispatcher);
     assert(callback != null,
         "The callbackDispatcher needs to be either a static function or a top level function to be accessible as a Flutter entry point.");
@@ -167,6 +178,19 @@ class Workmanager {
           callbackHandle: handle,
         ),
       );
+      if (onProgress != null && Platform.isAndroid) {
+        _foregroundChannel.setMethodCallHandler((MethodCall call) async {
+          switch (call.method) {
+            case "updateProgress":
+              final String progressStr = call.arguments["progress"];
+              final String taskId = call.arguments['workId'];
+              final String state = call.arguments['state'];
+              _onProgress(taskId, state, jsonDecode(progressStr));
+              break;
+          }
+        });
+        await _foregroundChannel.invokeMethod<void>("listenProgress");
+      }
     }
   }
 
@@ -178,7 +202,7 @@ class Workmanager {
   /// A [uniqueName] is required so only one task can be registered.
   /// The [taskName] is the value that will be returned in the [BackgroundTaskHandler]
   /// The [inputData] is the input data for task. Valid value types are: int, bool, double, String and their list
-  Future<void> registerOneOffTask(
+  Future<String?> registerOneOffTask(
     /// Only supported on Android.
     final String uniqueName,
 
@@ -204,7 +228,7 @@ class Workmanager {
     final OutOfQuotaPolicy? outOfQuotaPolicy,
     final Map<String, dynamic>? inputData,
   }) async =>
-      await _foregroundChannel.invokeMethod(
+      await _foregroundChannel.invokeMethod<String>(
         "registerOneOffTask",
         JsonMapperHelper.toRegisterMethodArgument(
           isInDebugMode: _isInDebugMode,

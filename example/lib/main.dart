@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -22,6 +23,7 @@ const iOSBackgroundAppRefresh =
     "be.tramckrijte.workmanagerExample.iOSBackgroundAppRefresh";
 const iOSBackgroundProcessingTask =
     "be.tramckrijte.workmanagerExample.iOSBackgroundProcessingTask";
+const progressTaskKey = "be.tramckrijte.workmanagerExample.progressTask";
 
 final List<String> allTasks = [
   simpleTaskKey,
@@ -87,6 +89,13 @@ void callbackDispatcher() {
         await Future<void>.delayed(Duration(seconds: 40));
         print("$task finished");
         break;
+      case progressTaskKey:
+        Workmanager().setProgress({'progress': 1});
+        await Future<void>.delayed(Duration(seconds: 1));
+        Workmanager().setProgress({'progress': 5});
+        await Future<void>.delayed(Duration(seconds: 1));
+        Workmanager().setProgress({'progress': 10});
+        break;
       default:
         return Future.value(false);
     }
@@ -103,6 +112,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   bool workmanagerInitialized = false;
   String _prefsString = "empty";
+  List<String> reportedProgress = [];
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +145,12 @@ class _MyAppState extends State<MyApp> {
                       Workmanager().initialize(
                         callbackDispatcher,
                         isInDebugMode: true,
+                        onProgress: (String taskId, String workState, Map<String, dynamic> progress) {
+                          reportedProgress.add("$taskId\t$workState\t${jsonEncode(progress)}");
+                          setState(() {
+                            reportedProgress = reportedProgress;
+                          });
+                        }
                       );
                       setState(() => workmanagerInitialized = true);
                     }
@@ -271,6 +287,22 @@ class _MyAppState extends State<MyApp> {
                         }
                       : null,
                 ),
+                //This task runs once, and reports its progress
+                //Most likely this will trigger immediately
+                ElevatedButton(
+                  child: Text("Register Progress Task"),
+                  onPressed: () {
+                     if (!workmanagerInitialized) {
+                            _showNotInitialized();
+                            return;
+                          }
+                    Workmanager().registerOneOffTask(
+                      progressTaskKey,
+                      progressTaskKey,
+                      inputData: <String, dynamic>{},
+                    );
+                  },
+                ),
                 SizedBox(height: 16),
                 ElevatedButton(
                     child: Text("isscheduled (Android)"),
@@ -308,6 +340,14 @@ class _MyAppState extends State<MyApp> {
                     '\n$_prefsString',
                   ),
                 ),
+                ListView.builder(
+                  itemCount: reportedProgress.length,
+
+                  shrinkWrap: true,
+                  itemBuilder: (context, index) {
+                    return Text("${reportedProgress[index]}");
+                  },
+                )
               ],
             ),
           ),

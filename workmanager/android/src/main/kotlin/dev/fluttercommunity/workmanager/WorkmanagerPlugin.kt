@@ -17,8 +17,8 @@ class WorkmanagerPlugin : FlutterPlugin {
         context: Context,
         messenger: BinaryMessenger,
     ) {
-        workmanagerCallHandler = WorkmanagerCallHandler(context)
         methodChannel = MethodChannel(messenger, "be.tramckrijte.workmanager/foreground_channel_work_manager")
+        workmanagerCallHandler = WorkmanagerCallHandler(context, methodChannel!!)
         methodChannel?.setMethodCallHandler(workmanagerCallHandler)
     }
 

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.concurrent.futures.CallbackToFutureAdapter
+import androidx.work.Data
 import androidx.work.ListenableWorker
 import androidx.work.WorkerParameters
 import com.google.common.util.concurrent.ListenableFuture
@@ -33,10 +34,13 @@ class BackgroundWorker(
         const val PAYLOAD_KEY = "be.tramckrijte.workmanager.INPUT_DATA"
         const val DART_TASK_KEY = "be.tramckrijte.workmanager.DART_TASK"
         const val IS_IN_DEBUG_MODE_KEY = "be.tramckrijte.workmanager.IS_IN_DEBUG_MODE_KEY"
+        const val DART_PROGRESS_KEY = "be.tramckrijte.workmanager.PROGRESS";
+
 
         const val BACKGROUND_CHANNEL_NAME =
             "be.tramckrijte.workmanager/background_channel_work_manager"
         const val BACKGROUND_CHANNEL_INITIALIZED = "backgroundChannelInitialized"
+        const val REPORT_PROGRESS = "backgroundChannelProgress"
 
         private val flutterLoader = FlutterLoader()
     }
@@ -170,6 +174,8 @@ class BackgroundWorker(
                         }
                     },
                 )
+            REPORT_PROGRESS ->
+                setProgressAsync(Data.Builder().putString(DART_PROGRESS_KEY, call.argument(DART_PROGRESS_KEY)).build());
         }
     }
 }

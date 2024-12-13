@@ -10,12 +10,17 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.WorkQuery
 import dev.fluttercommunity.workmanager.BackgroundWorker.Companion.DART_TASK_KEY
 import dev.fluttercommunity.workmanager.BackgroundWorker.Companion.IS_IN_DEBUG_MODE_KEY
 import dev.fluttercommunity.workmanager.BackgroundWorker.Companion.PAYLOAD_KEY
+import dev.fluttercommunity.workmanager.BackgroundWorker.Companion.DART_PROGRESS_KEY
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.TimeUnit
+import java.util.UUID
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 
 private fun Context.workManager() = WorkManager.getInstance(this)
 
@@ -26,10 +31,11 @@ private interface CallHandler<T : WorkManagerCall> {
         context: Context,
         convertedCall: T,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     )
 }
 
-class WorkmanagerCallHandler(private val ctx: Context) : MethodChannel.MethodCallHandler {
+class WorkmanagerCallHandler(private val ctx: Context, private val methodChannel: MethodChannel) : MethodChannel.MethodCallHandler {
     override fun onMethodCall(
         call: MethodCall,
         result: MethodChannel.Result,
@@ -40,32 +46,44 @@ class WorkmanagerCallHandler(private val ctx: Context) : MethodChannel.MethodCal
                     ctx,
                     extractedCall,
                     result,
+                    methodChannel,
                 )
             is WorkManagerCall.RegisterTask ->
                 RegisterTaskHandler.handle(
                     ctx,
                     extractedCall,
                     result,
+                    methodChannel,
                 )
             is WorkManagerCall.IsScheduled ->
                 IsScheduledHandler.handle(
                     ctx,
                     extractedCall,
                     result,
+                    methodChannel,
                 )
             is WorkManagerCall.CancelTask ->
                 UnregisterTaskHandler.handle(
                     ctx,
                     extractedCall,
                     result,
+                    methodChannel,
                 )
             is WorkManagerCall.Failed ->
                 FailedTaskHandler(extractedCall.code).handle(
                     ctx,
                     extractedCall,
                     result,
+                    methodChannel,
                 )
-            is WorkManagerCall.Unknown -> UnknownTaskHandler.handle(ctx, extractedCall, result)
+            is WorkManagerCall.ListenProgress ->
+                ListenProgressHandler.handle(
+                    ctx,
+                    extractedCall,
+                    result,
+                    methodChannel,
+                )
+            is WorkManagerCall.Unknown -> UnknownTaskHandler.handle(ctx, extractedCall, result, methodChannel)
         }
     }
 }
@@ -75,6 +93,7 @@ private object InitializeHandler : CallHandler<WorkManagerCall.Initialize> {
         context: Context,
         convertedCall: WorkManagerCall.Initialize,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         SharedPreferenceHelper.saveCallbackDispatcherHandleKey(
             context,
@@ -84,11 +103,24 @@ private object InitializeHandler : CallHandler<WorkManagerCall.Initialize> {
     }
 }
 
+private object ListenProgressHandler : CallHandler<WorkManagerCall.ListenProgress> {
+    override fun handle(
+        context: Context,
+        convertedCall: WorkManagerCall.ListenProgress,
+        result: MethodChannel.Result,
+        methodChannel: MethodChannel,
+    ) {
+        WM.listenToProgress(context, methodChannel);
+        result.success()
+    }
+}
+
 private object RegisterTaskHandler : CallHandler<WorkManagerCall.RegisterTask> {
     override fun handle(
         context: Context,
         convertedCall: WorkManagerCall.RegisterTask,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         if (!SharedPreferenceHelper.hasCallbackHandle(context)) {
             result.error(
@@ -109,14 +141,16 @@ private object RegisterTaskHandler : CallHandler<WorkManagerCall.RegisterTask> {
         }
 
         when (convertedCall) {
-            is WorkManagerCall.RegisterTask.OneOffTask -> enqueueOneOffTask(context, convertedCall)
-            is WorkManagerCall.RegisterTask.PeriodicTask ->
+            is WorkManagerCall.RegisterTask.OneOffTask -> result.success(enqueueOneOffTask(context, convertedCall).toString())
+            is WorkManagerCall.RegisterTask.PeriodicTask -> {
                 enqueuePeriodicTask(
                     context,
                     convertedCall,
                 )
+                result.success()
+            }
         }
-        result.success()
+
     }
 
     private fun enqueuePeriodicTask(
@@ -143,8 +177,8 @@ private object RegisterTaskHandler : CallHandler<WorkManagerCall.RegisterTask> {
     private fun enqueueOneOffTask(
         context: Context,
         convertedCall: WorkManagerCall.RegisterTask.OneOffTask,
-    ) {
-        WM.enqueueOneOffTask(
+    ): UUID {
+        return WM.enqueueOneOffTask(
             context = context,
             uniqueName = convertedCall.uniqueName,
             dartTask = convertedCall.taskName,
@@ -165,6 +199,7 @@ private object IsScheduledHandler : CallHandler<WorkManagerCall.IsScheduled> {
         context: Context,
         convertedCall: WorkManagerCall.IsScheduled,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         when (convertedCall) {
             is WorkManagerCall.IsScheduled.ByUniqueName -> {
@@ -183,6 +218,7 @@ private object UnregisterTaskHandler : CallHandler<WorkManagerCall.CancelTask> {
         context: Context,
         convertedCall: WorkManagerCall.CancelTask,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         when (convertedCall) {
             is WorkManagerCall.CancelTask.ByUniqueName ->
@@ -202,6 +238,7 @@ class FailedTaskHandler(private val code: String) : CallHandler<WorkManagerCall.
         context: Context,
         convertedCall: WorkManagerCall.Failed,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         result.error(code, null, null)
     }
@@ -212,12 +249,38 @@ private object UnknownTaskHandler : CallHandler<WorkManagerCall.Unknown> {
         context: Context,
         convertedCall: WorkManagerCall.Unknown,
         result: MethodChannel.Result,
+        methodChannel: MethodChannel,
     ) {
         result.notImplemented()
     }
 }
 
 object WM {
+    fun listenToProgress(
+        context: Context,
+        methodChannel: MethodChannel,
+    ) {
+        context.workManager().getWorkInfosLiveData(WorkQuery.Builder.fromStates(
+            listOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING)
+        ).build())
+            .observe(ProcessLifecycleOwner.get()) { workInfos ->
+                workInfos.forEach { workInfo ->
+                if (workInfo != null) {
+                    val progress = workInfo.progress.getString(DART_PROGRESS_KEY)
+                    if (progress != null && progress != "") {
+
+                        methodChannel.invokeMethod("updateProgress",
+                            mapOf(
+                                DART_PROGRESS to progress,
+                                DART_WORK_KEY to workInfo.id.toString(),
+                                DART_STATE to workInfo.state.toString(),
+                            )
+                        )
+                    }
+                }
+            }}
+    }
+
     fun enqueueOneOffTask(
         context: Context,
         uniqueName: String,
@@ -230,7 +293,7 @@ object WM {
         constraintsConfig: Constraints = defaultConstraints,
         outOfQuotaPolicy: OutOfQuotaPolicy? = defaultOutOfQuotaPolicy,
         backoffPolicyConfig: BackoffPolicyTaskConfig?,
-    ) {
+    ): UUID {
         val oneOffTaskRequest =
             OneTimeWorkRequest.Builder(BackgroundWorker::class.java)
                 .setInputData(buildTaskInputData(dartTask, isInDebugMode, payload))
@@ -252,6 +315,7 @@ object WM {
                 .build()
         context.workManager()
             .enqueueUniqueWork(uniqueName, existingWorkPolicy, oneOffTaskRequest)
+        return oneOffTaskRequest.id
     }
 
     fun enqueuePeriodicTask(
